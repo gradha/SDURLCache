@@ -252,6 +252,9 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
                                      nil];
                 }
                 diskCacheInfoDirty = NO;
+                diskCacheUsage = [[diskCacheInfo
+                                  objectForKey:kSDURLCacheInfoDiskUsageKey]
+                                 intValue];
                 if (verboseLogging)
                 {
                     NSNumber *n = [diskCacheInfo objectForKey:kSDURLCacheInfoDiskUsageKey];
@@ -540,6 +543,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 
 - (NSUInteger)currentDiskUsage
 {
+    if (!diskCacheInfo)
+        [self diskCacheInfo];
     return diskCacheUsage;
 }
 
