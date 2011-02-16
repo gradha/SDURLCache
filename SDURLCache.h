@@ -40,6 +40,12 @@
 @property (nonatomic, assign) BOOL ignoreMemoryOnlyStoragePolicy;
 
 /*
+ * Set this to YES to log usage and statistics with NSLog.
+ * The default value is NO.
+ */
+@property (nonatomic, assign) BOOL verboseLogging;
+
+/*
  * Returns a default cache director path to be used at cache initialization. The generated path directory
  * will be located in the application's cache directory and thus won't be synced by iTunes.
  */

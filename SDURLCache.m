@@ -16,6 +16,7 @@ static NSString *const kSDURLCacheInfoAccessesKey = @"accesses";
 static NSString *const kSDURLCacheInfoSizesKey = @"sizes";
 static float const kSDURLCacheLastModFraction = 0.1f; // 10% since Last-Modified suggested by RFC2616 section 13.2.4
 static float const kSDURLCacheDefault = 3600; // Default cache expiration delay if none defined (1 hour)
+static BOOL verboseLogging = NO;
 
 static NSDateFormatter* CreateDateFormatter(NSString *format)
 {
@@ -107,7 +108,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 {
     if (status != 200 && status != 203 && status != 300 && status != 301 && status != 302 && status != 307 && status != 410)
     {
-        // Uncacheable response status code
+        if (verboseLogging)
+            NSLog(@"SDURLCache: uncacheable response status code %d", status);
         return nil;
     }
 
@@ -115,7 +117,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     NSString *pragma = [headers objectForKey:@"Pragma"];
     if (pragma && [pragma isEqualToString:@"no-cache"])
     {
-        // Uncacheable response
+        if (verboseLogging)
+            NSLog(@"SDURLCache: Uncacheable due to headers %@.", pragma);
         return nil;
     }
 
@@ -139,7 +142,9 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
         NSRange foundRange = [cacheControl rangeOfString:@"no-cache"];
         if (foundRange.length > 0)
         {
-            // Can't be cached
+            if (verboseLogging)
+               NSLog(@"SDURLCache: Headers disallow caching: %@",
+                     cacheControl);
             return nil;
         }
 
@@ -157,6 +162,9 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
                 }
                 else
                 {
+                    if (verboseLogging)
+                        NSLog(@"SDURLCache: Bad max-age= range (%@)",
+                              cacheControl);
                     return nil;
                 }
             }
@@ -180,14 +188,18 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
         }
         else
         {
-            // If the Expires header can't be parsed or is expired, do not cache
+            if (verboseLogging)
+               NSLog(@"SDURLCache: Expires header can't be parsed or is "
+                     "expired, won't cache (%@)", expires);
             return nil;
         }
     }
 
     if (status == 302 || status == 307)
     {
-        // If not explict cache control defined, do not cache those status
+        if (verboseLogging)
+            NSLog(@"SDURLCache: No explicit cache control for status %d, "
+                  "not caching", status);
         return nil;
     }
 
@@ -208,6 +220,9 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
         }
         else
         {
+            if (verboseLogging)
+                NSLog(@"SDURLCache: Last-Modified date suggest cache "
+                      "expiration (%@)", lastModified);
             return nil;
         }
     }
@@ -237,6 +252,13 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
                                      nil];
                 }
                 diskCacheInfoDirty = NO;
+                if (verboseLogging)
+                {
+                    NSNumber *n = [diskCacheInfo objectForKey:kSDURLCacheInfoDiskUsageKey];
+                    NSLog(@"SDURLCache diskCacheInfo initialisation, "
+                          "disk usage: %d bytes, %0.2f MB.\n",
+                          [n intValue], [n intValue] / (1024 * 1024.0));
+                }
 
                 periodicMaintenanceTimer = [[NSTimer scheduledTimerWithTimeInterval:5
                                                                              target:self
@@ -311,6 +333,10 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
         return;
     }
 
+    if (verboseLogging)
+        NSLog(@"SDURLCache: Applying cleaning algorithms to balance cache "
+              "disk usage");
+
     NSMutableArray *keysToRemove = [NSMutableArray array];
 
     @synchronized(self.diskCacheInfo)
@@ -348,7 +374,9 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     // Archive the cached response on disk
     if (![NSKeyedArchiver archiveRootObject:cachedResponse toFile:cacheFilePath])
     {
-        // Caching failed for some reason
+        if (verboseLogging)
+            NSLog(@"SDURLCache: Caching failed for some reason for request %@",
+                  request.URL);
         return;
     }
 
@@ -356,6 +384,11 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     NSFileManager *fileManager = [[NSFileManager alloc] init];
     NSNumber *cacheItemSize = [[fileManager attributesOfItemAtPath:cacheFilePath error:NULL] objectForKey:NSFileSize];
     [fileManager release];
+
+    if (verboseLogging)
+        NSLog(@"SDURLCache: Caching %d bytes for %@",
+              [cacheItemSize unsignedIntValue], request.URL);
+
     diskCacheUsage += [cacheItemSize unsignedIntegerValue];
     @synchronized(self.diskCacheInfo)
     {
@@ -396,6 +429,16 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
     return [[paths objectAtIndex:0] stringByAppendingPathComponent:@"SDURLCache"];
+}
+
+- (BOOL)verboseLogging
+{
+    return verboseLogging;
+}
+
+- (void)setVerboseLogging:(BOOL)value
+{
+    verboseLogging = value;
 }
 
 #pragma mark NSURLCache
@@ -490,6 +533,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
         }
     }
 
+    if (verboseLogging)
+        NSLog(@"SDURLCache: cache miss for %@", request.URL);
     return nil;
 }
 
@@ -512,6 +557,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 
 - (BOOL)clearCache
 {
+    if (verboseLogging)
+        NSLog(@"SDURLCache: purging disk cache.");
     NSFileManager *fileManager = [[[NSFileManager alloc] init] autorelease];
     return [fileManager removeItemAtPath:diskCachePath error:NULL];
 }
@@ -529,6 +576,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     {
         return YES;
     }
+    if (verboseLogging)
+        NSLog(@"SDURLCache: isCached miss for %@", url);
     return NO;
 }
 
