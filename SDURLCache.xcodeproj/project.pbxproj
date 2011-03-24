@@ -253,6 +253,7 @@
 				GCC_PREFIX_HEADER = SDURLCache_Prefix.pch;
 				INSTALL_PATH = /usr/local/lib;
 				PRODUCT_NAME = SDURLCache;
+				SDKROOT = iphoneos;
 			};
 			name = Debug;
 		};
@@ -267,6 +268,7 @@
 				GCC_PREFIX_HEADER = SDURLCache_Prefix.pch;
 				INSTALL_PATH = /usr/local/lib;
 				PRODUCT_NAME = SDURLCache;
+				SDKROOT = iphoneos;
 			};
 			name = Release;
 		};

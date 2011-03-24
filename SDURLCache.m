@@ -63,6 +63,18 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 
 #pragma mark SDURLCache (tools)
 
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request
+{
+    NSString *string = request.URL.absoluteString;
+    NSRange hash = [string rangeOfString:@"#"];
+    if (hash.location == NSNotFound)
+        return request;
+
+    NSMutableURLRequest *copy = [[request mutableCopy] autorelease];
+    copy.URL = [NSURL URLWithString:[string substringToIndex:hash.location]];
+    return copy;
+}
+
 + (NSString *)cacheKeyForURL:(NSURL *)url
 {
     const char *str = [url.absoluteString UTF8String];
@@ -83,17 +95,26 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     NSDate *date = nil;
 
     // RFC 1123 date format - Sun, 06 Nov 1994 08:49:37 GMT
-    if (!RFC1123DateFormatter) RFC1123DateFormatter = [CreateDateFormatter(@"EEE, dd MMM yyyy HH:mm:ss z") retain];
+    @synchronized(self)
+    {
+        if (!RFC1123DateFormatter) RFC1123DateFormatter = [CreateDateFormatter(@"EEE, dd MMM yyyy HH:mm:ss z") retain];
+    }
     date = [RFC1123DateFormatter dateFromString:httpDate];
     if (!date)
     {
         // ANSI C date format - Sun Nov  6 08:49:37 1994
-        if (!ANSICDateFormatter) ANSICDateFormatter = [CreateDateFormatter(@"EEE MMM d HH:mm:ss yyyy") retain];
+        @synchronized(self)
+        {
+            if (!ANSICDateFormatter) ANSICDateFormatter = [CreateDateFormatter(@"EEE MMM d HH:mm:ss yyyy") retain];
+        }
         date = [ANSICDateFormatter dateFromString:httpDate];
         if (!date)
         {
             // RFC 850 date format - Sunday, 06-Nov-94 08:49:37 GMT
-            if (!RFC850DateFormatter) RFC850DateFormatter = [CreateDateFormatter(@"EEEE, dd-MMM-yy HH:mm:ss z") retain];
+            @synchronized(self)
+            {
+                if (!RFC850DateFormatter) RFC850DateFormatter = [CreateDateFormatter(@"EEEE, dd-MMM-yy HH:mm:ss z") retain];
+            }
             date = [RFC850DateFormatter dateFromString:httpDate];
         }
     }
@@ -263,6 +284,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
                           [n intValue], [n intValue] / (1024 * 1024.0));
                 }
 
+                diskCacheUsage = [[diskCacheInfo objectForKey:kSDURLCacheInfoDiskUsageKey] unsignedIntValue];
+
                 periodicMaintenanceTimer = [[NSTimer scheduledTimerWithTimeInterval:5
                                                                              target:self
                                                                            selector:@selector(periodicMaintenance)
@@ -293,7 +316,12 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     [self createDiskCachePath];
     @synchronized(self.diskCacheInfo)
     {
-        [self.diskCacheInfo writeToFile:[diskCachePath stringByAppendingPathComponent:kSDURLCacheInfoFileName] atomically:YES];
+        NSData *data = [NSPropertyListSerialization dataFromPropertyList:self.diskCacheInfo format:NSPropertyListBinaryFormat_v1_0 errorDescription:NULL];
+        if (data)
+        {
+            [data writeToFile:[diskCachePath stringByAppendingPathComponent:kSDURLCacheInfoFileName] atomically:YES];
+        }
+
         diskCacheInfoDirty = NO;
     }
 }
@@ -317,11 +345,9 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
             [accesses removeObjectForKey:cacheKey];
             [sizes removeObjectForKey:cacheKey];
             [fileManager removeItemAtPath:[diskCachePath stringByAppendingPathComponent:cacheKey] error:NULL];
+
             diskCacheUsage -= cacheItemSize;
-            @synchronized(self.diskCacheInfo)
-            {
-                [self.diskCacheInfo setObject:[NSNumber numberWithUnsignedInteger:diskCacheUsage] forKey:kSDURLCacheInfoDiskUsageKey];
-            }
+            [self.diskCacheInfo setObject:[NSNumber numberWithUnsignedInteger:diskCacheUsage] forKey:kSDURLCacheInfoDiskUsageKey];
         }
     }
 
@@ -393,8 +419,10 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
               [cacheItemSize unsignedIntValue], request.URL);
 
     diskCacheUsage += [cacheItemSize unsignedIntegerValue];
+
     @synchronized(self.diskCacheInfo)
     {
+        diskCacheUsage += [cacheItemSize unsignedIntegerValue];
         [self.diskCacheInfo setObject:[NSNumber numberWithUnsignedInteger:diskCacheUsage] forKey:kSDURLCacheInfoDiskUsageKey];
 
 
@@ -465,6 +493,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 
 - (void)storeCachedResponse:(NSCachedURLResponse *)cachedResponse forRequest:(NSURLRequest *)request
 {
+    request = [SDURLCache canonicalRequestForRequest:request];
+
     if (request.cachePolicy == NSURLRequestReloadIgnoringLocalCacheData
         || request.cachePolicy == NSURLRequestReloadIgnoringLocalAndRemoteCacheData
         || request.cachePolicy == NSURLRequestReloadIgnoringCacheData)
@@ -506,6 +536,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 
 - (NSCachedURLResponse *)cachedResponseForRequest:(NSURLRequest *)request
 {
+    request = [SDURLCache canonicalRequestForRequest:request];
+
     NSCachedURLResponse *memoryResponse = [super cachedResponseForRequest:request];
     if (memoryResponse)
     {
@@ -531,7 +563,17 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 
                 // OPTI: Store the response to memory cache for potential future requests
                 [super storeCachedResponse:diskResponse forRequest:request];
-                return diskResponse;
+
+                // SRK: Work around an interesting retainCount bug in CFNetwork on iOS << 3.2.
+                if (kCFCoreFoundationVersionNumber < kCFCoreFoundationVersionNumber_iPhoneOS_3_2)
+                {
+                    diskResponse = [super cachedResponseForRequest:request];
+                }
+
+                if (diskResponse)
+                {
+                    return diskResponse;
+                }
             }
         }
     }
@@ -544,12 +586,16 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 - (NSUInteger)currentDiskUsage
 {
     if (!diskCacheInfo)
+    {
         [self diskCacheInfo];
+    }
     return diskCacheUsage;
 }
 
 - (void)removeCachedResponseForRequest:(NSURLRequest *)request
 {
+    request = [SDURLCache canonicalRequestForRequest:request];
+
     [super removeCachedResponseForRequest:request];
     [self removeCachedResponseForCachedKeys:[NSArray arrayWithObject:[SDURLCache cacheKeyForURL:request.URL]]];
     [self saveCacheInfo];
@@ -557,20 +603,24 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 
 - (void)removeAllCachedResponses
 {
-    [super removeAllCachedResponses];
-}
-
-- (BOOL)clearCache
-{
     if (verboseLogging)
+    {
         NSLog(@"SDURLCache: purging disk cache.");
+    }
+    [super removeAllCachedResponses];
     NSFileManager *fileManager = [[[NSFileManager alloc] init] autorelease];
-    return [fileManager removeItemAtPath:diskCachePath error:NULL];
+    [fileManager removeItemAtPath:diskCachePath error:NULL];
+    @synchronized(self)
+    {
+        [diskCacheInfo release], diskCacheInfo = nil;
+    }
 }
 
 - (BOOL)isCached:(NSURL *)url
 {
     NSURLRequest *request = [NSURLRequest requestWithURL:url];
+    request = [SDURLCache canonicalRequestForRequest:request];
+
     if ([super cachedResponseForRequest:request])
     {
         return YES;
