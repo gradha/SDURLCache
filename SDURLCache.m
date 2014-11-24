@@ -73,7 +73,7 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
 {
     const char *str = [url.absoluteString UTF8String];
     unsigned char r[CC_MD5_DIGEST_LENGTH];
-    CC_MD5(str, strlen(str), r);
+    CC_MD5(str, (CC_LONG)strlen(str), r);
     return [NSString stringWithFormat:@"%@_%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
             kSDURLCacheVersion, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15]];
 }
@@ -118,7 +118,7 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     if (status != 200 && status != 203 && status != 300 && status != 301 && status != 302 && status != 307 && status != 410)
     {
         if (verboseLogging)
-            NSLog(@"SDURLCache: uncacheable response status code %d", status);
+            NSLog(@"SDURLCache: uncacheable response status code %@", @(status));
         return nil;
     }
 
@@ -208,8 +208,8 @@ static NSDateFormatter* CreateDateFormatter(NSString *format)
     if (status == 302 || status == 307)
     {
         if (verboseLogging)
-            NSLog(@"SDURLCache: No explicit cache control for status %d, "
-                  "not caching", status);
+            NSLog(@"SDURLCache: No explicit cache control for status %@, "
+                  "not caching", @(status));
         return nil;
     }
 
